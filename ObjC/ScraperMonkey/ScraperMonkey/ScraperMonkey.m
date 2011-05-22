@@ -19,13 +19,14 @@
 
 - (id)initWithDefinition:(NSDictionary *)definition
 {
-	if (self = [super init]) {
-		_variables = [[NSMutableDictionary alloc] init];
-		_result = [[NSMutableDictionary alloc] init];
-		_definition = [definition retain];
-	}
-	
-	return self;
+    self = [super init];
+    if (self != nil) {
+        _variables = [[NSMutableDictionary alloc] init];
+        _result = [[NSMutableDictionary alloc] init];
+        _definition = [definition retain];
+    }
+    
+    return self;
 }
 
 - (id)initWithDefinitionJSON:(NSString *)JSON
@@ -72,13 +73,25 @@
 	for (NSArray *variable in matchArray) {
 		NSString *token = [variable objectAtIndex:0];
 		NSString *value = [variable objectAtIndex:1];
-		
+        NSString *strM = nil;
+        NSString *strR = nil;
+        
+        NSArray *parts = [value componentsSeparatedByString:@"%"];
+        if ([parts count] == 3) {
+            value = [parts objectAtIndex:0];
+            strM = [parts objectAtIndex:1];
+            strR = [parts objectAtIndex:2];
+        }
+        
 		NSString *exp = [_variables objectForKey:value];
 		if (exp == nil)
 			exp = [_result objectForKey:value];
 		
-		if (exp != nil)
-			result = [result stringByReplacingOccurrencesOfString:token withString:exp];
+		if (exp != nil) {
+            if ([strM length] > 0 && [strR length] > 0)
+                exp = [exp stringByReplacingOccurrencesOfRegex:strM withString:strR];
+            result = [result stringByReplacingOccurrencesOfString:token withString:exp];
+        }
 	}
 	
 	return result;
@@ -128,7 +141,29 @@
 		
 		[req addRequestHeader:requestHeaderKey value:[self expand:headerValue]];
 	}
-	
+
+    // HTTP cookies.
+    NSArray *requestCookies = [node objectForKey:@"HTTPCookies"];
+    if ([requestCookies count] > 0) {
+        NSMutableArray *cookies = [[[NSMutableArray alloc] initWithArray:[ASIHTTPRequest sessionCookies]] autorelease];
+
+        for (NSDictionary *cookieDict in requestCookies) {
+            NSMutableDictionary *properties = [NSMutableDictionary dictionary];
+            [properties setObject:[cookieDict objectForKey:@"Value"] forKey:NSHTTPCookieValue];
+            [properties setObject:[cookieDict objectForKey:@"Name"] forKey:NSHTTPCookieName];
+            [properties setObject:[cookieDict objectForKey:@"Domain"] forKey:NSHTTPCookieDomain];
+            [properties setObject:[cookieDict objectForKey:@"Path"] forKey:NSHTTPCookiePath];
+            [properties setObject:[NSDate dateWithTimeIntervalSinceNow:[[cookieDict objectForKey:@"Time"] doubleValue]]
+                           forKey:NSHTTPCookieExpires];
+
+            NSHTTPCookie *cookie = [[[NSHTTPCookie alloc] initWithProperties:properties] autorelease];            
+            
+            [cookies addObject:cookie];
+        }
+        
+        [req setRequestCookies:cookies];
+    }
+
 	// Synchronous request & data.
 	[req startSynchronous];
 	NSString *dataStr = [req responseString];
@@ -155,10 +190,11 @@
 
 		NSString *handlerXpath = [handler objectForKey:@"XPath"];
 		if (handlerXpath != nil) {
+            NSError *error = nil;
 			CXMLElement *root = [doc rootElement];
 			
 			// XPath nodes.
-			NSArray *nodes = [root nodesForXPath:handlerXpath error:nil];
+			NSArray *nodes = [root nodesForXPath:handlerXpath error:&error];
 
 			// *NO* nodes?  Any errors?
 			if ([nodes count] == 0) {
@@ -249,7 +285,10 @@
 			}
 		}
 	}
-	
+    
+    double timestamp = [[NSDate date] timeIntervalSinceReferenceDate];
+    [_result setObject:[NSNumber numberWithDouble:timestamp] forKey:@"timestamp"];
+    
 	[doc release];
 	[req release];
 	
@@ -305,14 +344,13 @@
 {
 	[ASIHTTPRequest setSessionCookies:nil];
 	
-	// FIXME: What the hell is this?
 	if ([self.delegate respondsToSelector:@selector(scraperDidStart:)])
 		[self.delegate scraperDidStart:self];
 
 	[self requestScraper:_definition node:nil];
 	
 	if ([self.delegate respondsToSelector:@selector(scraperDidEnd:)])
-		[self.delegate scraperDidEnd:self];
+		[self.delegate scraperDidEnd:self];    
 }
 
 - (NSDictionary *)variables
